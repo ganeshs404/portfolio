@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ganesh Sreekumar — Principal Programme Manager</title>
+<meta name="description" content="Ganesh Sreekumar — Strategic Engineering Program Leader specializing in Kubernetes, GenAI platforms, and cloud-native architecture." />
+<style>
+  :root{
+    --bg: #0b1220;
+    --bg-alt: #101a2e;
+    --card: #131f38;
+    --text: #e8edf7;
+    --muted: #9aa8c2;
+    --accent: #2dd4bf;
+    --accent-soft: rgba(45, 212, 191, 0.14);
+    --border: rgba(255,255,255,0.08);
+    --max: 960px;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height:1.6;
+  }
+  a{color:var(--accent); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  .wrap{max-width:var(--max); margin:0 auto; padding:0 24px;}
+
+  header.site{
+    position:sticky; top:0; z-index:10;
+    background: rgba(11,18,32,0.85);
+    backdrop-filter: blur(8px);
+    border-bottom:1px solid var(--border);
+  }
+  nav.site{
+    display:flex; align-items:center; justify-content:space-between;
+    max-width:var(--max); margin:0 auto; padding:14px 24px;
+  }
+  nav.site .brand{font-weight:700; letter-spacing:0.3px;}
+  nav.site .links{display:flex; gap:22px; font-size:14px;}
+  nav.site .links a{color:var(--muted);}
+  nav.site .links a:hover{color:var(--text); text-decoration:none;}
+
+  .hero{
+    padding:88px 0 56px;
+    background: radial-gradient(700px 300px at 20% 0%, var(--accent-soft), transparent 70%);
+  }
+  .hero h1{
+    font-size:clamp(32px, 5vw, 48px);
+    margin:0 0 6px;
+    letter-spacing:-0.5px;
+  }
+  .hero .role{
+    color:var(--accent);
+    font-weight:600;
+    font-size:19px;
+    margin:0 0 18px;
+  }
+  .hero .summary{
+    color:var(--muted);
+    max-width:700px;
+    font-size:16px;
+  }
+  .hero .meta{
+    display:flex; flex-wrap:wrap; gap:16px;
+    margin-top:22px; font-size:14px; color:var(--muted);
+  }
+  .hero .meta span{display:inline-flex; align-items:center; gap:6px;}
+  .cta-row{margin-top:28px; display:flex; gap:12px; flex-wrap:wrap;}
+  .btn{
+    display:inline-block; padding:11px 20px; border-radius:8px;
+    font-size:14px; font-weight:600; border:1px solid var(--border);
+  }
+  .btn.primary{background:var(--accent); color:#04211d; border-color:var(--accent);}
+  .btn.primary:hover{opacity:0.9; text-decoration:none;}
+  .btn.ghost{color:var(--text);}
+  .btn.ghost:hover{border-color:var(--accent); text-decoration:none;}
+
+  section{padding:52px 0;}
+  section h2{
+    font-size:13px; text-transform:uppercase; letter-spacing:1.5px;
+    color:var(--accent); margin:0 0 22px;
+  }
+  section.alt{background:var(--bg-alt); border-top:1px solid var(--border); border-bottom:1px solid var(--border);}
+
+  .job{
+    padding:22px 0; border-top:1px solid var(--border);
+  }
+  .job:first-of-type{border-top:none;}
+  .job-head{
+    display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px;
+  }
+  .job-head h3{margin:0; font-size:18px;}
+  .job-head .dates{color:var(--muted); font-size:13px; white-space:nowrap;}
+  .job .company{color:var(--muted); font-size:14px; margin:2px 0 10px;}
+  .job ul{margin:0; padding-left:20px; color:var(--text);}
+  .job li{margin-bottom:8px; font-size:15px;}
+  .job li::marker{color:var(--accent);}
+
+  .skills{display:flex; flex-wrap:wrap; gap:10px;}
+  .skills span{
+    background:var(--card); border:1px solid var(--border);
+    padding:7px 14px; border-radius:999px; font-size:13px; color:var(--text);
+  }
+
+  .cert-card, .community-card{
+    background:var(--card); border:1px solid var(--border); border-radius:12px;
+    padding:22px;
+  }
+  .cert-card h3, .community-card h3{margin:0 0 6px; font-size:17px;}
+  .cert-card .dates{color:var(--muted); font-size:13px; margin-bottom:0;}
+  .community-card p{color:var(--muted); margin:10px 0 0;}
+  .community-card ul{margin:12px 0 0; padding-left:20px; color:var(--text);}
+  .community-card li{margin-bottom:6px; font-size:14.5px;}
+
+  footer{
+    padding:40px 0 60px; text-align:center; color:var(--muted); font-size:13px;
+  }
+  footer a{color:var(--muted);}
+  footer a:hover{color:var(--accent);}
+</style>
+</head>
+<body>
+
+<header class="site">
+  <nav class="site">
+    <div class="brand">Ganesh Sreekumar</div>
+    <div class="links">
+      <a href="#about">About</a>
+      <a href="#experience">Experience</a>
+      <a href="#skills">Skills</a>
+      <a href="#community">Community</a>
+      <a href="#contact">Contact</a>
+    </div>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <h1>Ganesh Sreekumar</h1>
+    <p class="role">Principal Programme Manager — GenAI &amp; Cloud-Native Platforms</p>
+    <p class="summary">
+      Strategic engineering program leader and architectural authority directing complex,
+      end-to-end technology and infrastructure delivery across enterprise domains. Deep
+      Kubernetes expertise spanning cluster architecture, Helm-based microservice delivery,
+      service mesh, and production deployment pipelines — with hands-on background in
+      backend engineering, DevOps, SRE, and GenAI/RAG systems built on Python and Java.
+    </p>
+    <div class="meta">
+      <span>📍 London, UK</span>
+      <span>✉️ <a href="mailto:ganeshs404@gmail.com">ganeshs404@gmail.com</a></span>
+      <span>🔗 <a href="https://linkedin.com/in/ganesh-sreekumar-a148a0a6" target="_blank" rel="noopener">LinkedIn</a></span>
+      <span>🌐 <a href="https://ganeshsreekumar.com" target="_blank" rel="noopener">theaipeople.uk</a></span>
+    </div>
+    <div class="cta-row">
+      <a class="btn primary" href="resume.pdf" download>Download Resume (PDF)</a>
+      <a class="btn ghost" href="#experience">View Experience</a>
+    </div>
+  </div>
+</section>
+
+<section id="about">
+  <div class="wrap">
+    <h2>About</h2>
+    <p class="summary" style="max-width:100%;">
+      Proven track record bridging engineering, operations, and external partners to establish
+      governance frameworks, manage master schedules, and de-risk critical-path deployments.
+      Experienced in building delivery standards from scratch, standing up PMO frameworks, and
+      managing multivendor/partner ecosystems for high-availability systems — leading
+      multidisciplinary teams across UX, frontend, backend, QA, and platform engineering to
+      deliver production-grade systems at scale. Passionate about architectural excellence,
+      mentoring engineers, and enabling teams to adopt modern AI, cloud, and platform
+      engineering practices.
+    </p>
+  </div>
+</section>
+
+<section id="experience" class="alt">
+  <div class="wrap">
+    <h2>Experience</h2>
+
+    <div class="job">
+      <div class="job-head">
+        <h3>Senior Programme Manager — GenAI &amp; Network Platforms</h3>
+        <span class="dates">02/2022 — Present</span>
+      </div>
+      <p class="company">British Telecommunications (BT)</p>
+      <ul>
+        <li>Architected and led enterprise GenAI chatbot solutions using Retrieval-Augmented Generation (RAG) and Model Context Protocol (MCP) patterns for network operations and customer-facing use cases.</li>
+        <li>Engineered the Kubernetes deployment strategy for the enterprise GenAI stack — custom Helm charts, API gateway routing, service mesh traffic control, and automated CI/CD for zero-downtime, production-grade scaling.</li>
+        <li>Architected BT's CAMARA-compliant network API platform, deploying standardized telecom APIs on production Kubernetes for secure, high-throughput external developer access.</li>
+        <li>Led end-to-end platform delivery for the UK's critical national 999 emergency call-handling infrastructure, serving 30M+ users annually, from concept through live operational handover.</li>
+      </ul>
+    </div>
+
+    <div class="job">
+      <div class="job-head">
+        <h3>Software Engineering Manager</h3>
+        <span class="dates">01/2019 — 01/2022</span>
+      </div>
+      <p class="company">British Telecom</p>
+      <ul>
+        <li>Led software engineering and platform support for the UK's 999 emergency platform, directing 24/7 delivery under strict Critical National Infrastructure (CNI) reliability standards.</li>
+        <li>Modernized deployment automation with Ansible, cutting deployment overhead and accelerating time-to-market across environments.</li>
+        <li>Architected DevSecOps release pipelines with automated security gates and compliance scanning (Qualys) embedded directly into CI/CD.</li>
+        <li>Architected enterprise data lake and observability platforms powered by Elasticsearch and Grafana for real-time telemetry and executive dashboards.</li>
+      </ul>
+    </div>
+
+    <div class="job">
+      <div class="job-head">
+        <h3>Software Engineering Lead</h3>
+        <span class="dates">04/2016 — 12/2018</span>
+      </div>
+      <p class="company">Vodafone New Zealand via Infosys · New Zealand</p>
+      <ul>
+        <li>Led end-to-end engineering and support for Vodafone NZ's BSS stack, modernizing core billing, rating, and customer fulfillment engines.</li>
+        <li>Architected the enterprise transition from legacy Oracle WebLogic to a containerized Docker platform, eliminating environment drift with standardized, reproducible deployment pipelines.</li>
+        <li>Led infrastructure governance and cloud-native management, designing fault-tolerant hosting environments aligned with enterprise security and availability standards.</li>
+        <li>Deep networking expertise across TCP/IP, UDP, IPv4/IPv6, BGP, and routing/switching for high-throughput, low-latency telecom infrastructure.</li>
+      </ul>
+    </div>
+
+    <div class="job">
+      <div class="job-head">
+        <h3>Systems Engineer</h3>
+        <span class="dates">03/2013 — 03/2016</span>
+      </div>
+      <p class="company">Tata Consultancy Services (TCS) · Kochi, Kerala</p>
+      <ul>
+        <li>Designed and deployed resilient, high-throughput microservices for enterprise Banking and Insurance clients using Java, Spring Boot/Spring Cloud, and Docker.</li>
+        <li>Engineered automated CI/CD pipelines standardizing build, test, and packaging for Java/Spring microservices.</li>
+        <li>Championed TDD/BDD practices with JUnit, Mockito, and Cucumber, integrating automated test suites into CI/CD to reduce defect leakage.</li>
+        <li>Built high-performance batch and event-driven architectures using Spring Batch, Redis, and Apache Kafka.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="skills">
+  <div class="wrap">
+    <h2>Skills</h2>
+    <div class="skills">
+      <span>Kubernetes</span><span>Docker</span><span>Helm</span><span>Ansible</span>
+      <span>CI/CD</span><span>Java</span><span>Spring Boot</span><span>Python</span>
+      <span>GenAI</span><span>RAG</span><span>MCP</span><span>Kafka</span>
+      <span>Elasticsearch</span><span>Kibana</span><span>Prometheus</span><span>Consul</span>
+      <span>Hazelcast</span><span>System Design</span><span>Shell Scripting</span><span>UNIX</span>
+      <span>Git</span><span>Data Science</span>
+    </div>
+  </div>
+</section>
+
+<section id="certifications" class="alt">
+  <div class="wrap">
+    <h2>Certifications</h2>
+    <div class="cert-card">
+      <h3>AWS Certified AI Practitioner</h3>
+      <p class="dates">Amazon Web Services · 01/2026 — 01/2029</p>
+    </div>
+  </div>
+</section>
+
+<section id="community">
+  <div class="wrap">
+    <h2>Community &amp; Leadership</h2>
+    <div class="community-card">
+      <h3>The AI People UK — <a href="https://theaipeople.uk/" target="_blank" rel="noopener">theaipeople.uk</a></h3>
+      <p style="color:var(--text); margin:0;">Founder</p>
+      <p>Founded and lead a UK-based community of AI Engineers, Cloud Architects, and Full-Stack Developers building production-grade AI and cloud-native systems.</p>
+      <ul>
+        <li>Drives initiatives in GenAI solutions, cloud-native architecture on AWS, and containerized, production-ready platforms.</li>
+        <li>Curates open-source repositories showcasing AI/GenAI patterns and cloud infrastructure best practices.</li>
+        <li>Facilitates mentoring and knowledge-sharing across engineers at different career stages.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="contact">
+  <div class="wrap">
+    <h2>Contact</h2>
+    <p class="summary" style="max-width:100%;">
+      Open to conversations on platform engineering, GenAI architecture, and Kubernetes at scale.
+      Reach out at <a href="mailto:ganeshs404@gmail.com">ganeshs404@gmail.com</a> or connect on
+      <a href="https://linkedin.com/in/ganesh-sreekumar-a148a0a6" target="_blank" rel="noopener">LinkedIn</a>.
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>© <span id="year"></span> Ganesh Sreekumar · Built and deployed on Cloudflare Pages</p>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>
