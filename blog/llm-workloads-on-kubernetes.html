@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Serving LLM workloads on Kubernetes: what's different — Ganesh Sreekumar</title>
+<meta name="description" content="GPU inference pods break the assumptions Kubernetes is built on. Notes on probes, autoscaling on the right signal, model loading, node pools and cost control." />
+<link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+
+<header class="site">
+  <nav class="site">
+    <a class="brand" href="../index.html">Ganesh Sreekumar</a>
+    <div class="links">
+      <a href="../index.html#work">Work</a>
+      <a href="index.html">Writing</a>
+      <a href="../index.html#contact">Contact</a>
+    </div>
+  </nav>
+</header>
+
+<article class="article">
+  <p class="eyebrow">Kubernetes</p>
+  <h1>Serving LLM workloads on Kubernetes: what's different</h1>
+  <p class="byline">28 January 2026 · 8 min read</p>
+  <div class="tags"><span>Kubernetes</span><span>GPUs</span><span>Autoscaling</span><span>Inference</span><span>Cost</span></div>
+
+  <p>
+    Kubernetes was designed around a few reasonable assumptions: your pods are small, they start
+    in seconds, they're interchangeable, and if one is struggling you can add another. Almost
+    every default in the system — rolling updates, liveness probes, horizontal autoscaling — is
+    built on those assumptions.
+  </p>
+  <p>
+    A pod that holds a 30GB model in GPU memory and takes four minutes to become ready violates
+    all of them. Kubernetes will still run it. It will just make a series of decisions that look
+    correct by its own logic and are wrong for your workload.
+  </p>
+  <p>
+    Most of our GenAI work calls hosted model APIs, so this applies to the self-hosted portion —
+    an open-weights model we run ourselves for a latency-sensitive path where sending data to an
+    external endpoint wasn't on the table. Everything below is what I wish I'd known before that
+    first deployment.
+  </p>
+
+  <h2>The startup time changes everything downstream</h2>
+  <p>
+    Pulling a multi-gigabyte image, then loading weights into GPU memory, then warming up, can
+    easily take several minutes. Every timeout in the system needs to know that.
+  </p>
+  <p>
+    The specific trap is the liveness probe. If you give it the same generous
+    <code>initialDelaySeconds</code> you'd give an app that starts in ten seconds, the kubelet
+    decides the container is dead partway through model loading and restarts it. Then it does that
+    again. You get a pod in an infinite restart loop with no error in the application logs,
+    because nothing is actually wrong — it was just never given time to finish.
+  </p>
+  <p>
+    Use a <strong>startup probe</strong>. That's what it's for: it suspends liveness and readiness
+    checking until the app reports ready for the first time, so you can be patient about startup
+    and aggressive about detecting a hang afterwards.
+  </p>
+  <pre><code>startupProbe:
+  httpGet: { path: /health, port: 8000 }
+  periodSeconds: 10
+  failureThreshold: 60        # up to 10 minutes to load
+
+readinessProbe:
+  httpGet: { path: /health, port: 8000 }
+  periodSeconds: 5
+  failureThreshold: 2
+
+livenessProbe:
+  httpGet: { path: /health, port: 8000 }
+  periodSeconds: 20
+  failureThreshold: 3</code></pre>
+  <p>
+    And separate the two endpoints properly. Readiness should mean "weights loaded, I can serve a
+    request". Liveness should mean "my process is not wedged". Wiring both to the same handler is
+    common and it's how you get a pod that restarts itself under load, which is precisely when you
+    can least afford to lose capacity.
+  </p>
+  <p>
+    While you're there: pre-pull the image onto the node pool, or bake the weights into the image,
+    or pull them from a local cache rather than over the internet on every cold start. Image pull
+    is frequently the largest single chunk of that four minutes, and it's the easiest to remove.
+  </p>
+
+  <h2>CPU-based autoscaling is the wrong signal</h2>
+  <p>
+    The default HPA scales on CPU utilisation. An inference pod is not CPU-bound; it's bound by
+    GPU compute and by memory for the KV cache. It can be completely saturated — queue backing up,
+    time-to-first-token climbing — while CPU sits at 15%. The HPA sees a relaxed pod and does
+    nothing.
+  </p>
+  <p>
+    Scale on something that reflects actual saturation. What's worked for us, in order of
+    preference:
+  </p>
+  <ul>
+    <li><strong>Queue depth or number of requests waiting.</strong> The most direct measure of
+      "we need more capacity", and it responds before latency degrades.</li>
+    <li><strong>Requests in flight per replica</strong>, compared against the concurrency the pod
+      can handle before latency falls off a cliff. You have to measure that ceiling by loading a
+      single pod until it degrades — it's the most useful number you'll produce all week.</li>
+    <li><strong>Time-to-first-token at a high percentile.</strong> Closest to what users feel, but
+      it's a lagging indicator: by the time it moves, someone has already had a bad experience.</li>
+  </ul>
+  <p>
+    We expose these from the serving layer as Prometheus metrics and scale with KEDA, which is
+    more comfortable with external metrics than the built-in HPA and can also scale a
+    non-production deployment to zero overnight. GPU nodes are expensive enough that scaling the
+    dev environment to zero paid for the setup work in about a fortnight.
+  </p>
+  <div class="callout">
+    <p>
+      <strong>Also fix the scaling behaviour.</strong> With a four-minute startup, a jumpy HPA is
+      actively harmful — it adds replicas that arrive after the spike has passed and removes them
+      just before the next one. Set a long <code>stabilizationWindowSeconds</code> on scale-down
+      and let scale-up be more eager than scale-down. Asymmetry is correct here.
+    </p>
+  </div>
+
+  <h2>Rolling updates need rethinking</h2>
+  <p>
+    A default rolling update assumes you can briefly run an extra replica while the old one drains.
+    With GPU pods, <code>maxSurge: 1</code> means "acquire another GPU node, please" — and if the
+    cluster autoscaler can't get one, your rollout sits there pending while you wonder what's
+    happening.
+  </p>
+  <p>
+    Options, depending on how much you can spend:
+  </p>
+  <ul>
+    <li>Keep one spare GPU slot in the pool so a surge always has somewhere to land. Simplest,
+      costs a node.</li>
+    <li>Set <code>maxSurge: 0</code> and <code>maxUnavailable: 1</code>, accepting reduced capacity
+      during the rollout. Fine if you have several replicas and slack.</li>
+    <li>Deploy during a known-quiet window. Unfashionable, entirely legitimate for an internal
+      tool.</li>
+  </ul>
+  <p>
+    Also set <code>terminationGracePeriodSeconds</code> generously and handle SIGTERM to drain
+    in-flight requests. A generation that's 80% through and gets killed is a user watching a reply
+    stop mid-sentence, and they will report it as "the AI is broken".
+  </p>
+
+  <h2>GPU scheduling is more explicit than you'd like</h2>
+  <p>
+    A GPU is not a compressible resource. You request whole devices, there's no overcommit, and a
+    pod that asks for a GPU on a cluster with none stays Pending indefinitely — no error, no
+    event that says "you don't have any of these", just silence.
+  </p>
+  <pre><code>resources:
+  limits:
+    nvidia.com/gpu: 1        # requests are implied; you get a whole device
+  requests:
+    cpu: "4"
+    memory: 24Gi
+
+nodeSelector:
+  cloud.google.com/gke-accelerator: nvidia-l4
+
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule</code></pre>
+  <p>
+    The pattern that's saved us the most trouble: <strong>taint the GPU nodes</strong> and only
+    tolerate the taint on workloads that need a GPU. Otherwise a routine CPU deployment lands on
+    your expensive accelerator node, and then a pod that genuinely needs the GPU can't schedule
+    because the node is full of an unrelated service's replicas. That took me an embarrassingly
+    long hour to diagnose the first time.
+  </p>
+  <p>
+    Keep GPU and CPU workloads in separate node pools with separate autoscaling. They have nothing
+    in common — different cost profile, different scaling dynamics, different failure modes.
+  </p>
+
+  <h2>Batching belongs in the serving layer, not the cluster</h2>
+  <p>
+    The largest throughput gain available to you isn't a Kubernetes setting at all. It's
+    continuous batching in the inference server — vLLM, TGI, whatever you're running — which packs
+    concurrent requests into the same forward pass instead of processing them one at a time.
+  </p>
+  <p>
+    I mention it in a Kubernetes post because the instinct when throughput is poor is to add
+    replicas, and if you're not batching you can be paying for three GPUs to do the work one
+    properly-configured GPU would do. Tune the serving layer before you scale the deployment. Then
+    scale.
+  </p>
+
+  <h2>The things that actually paged us</h2>
+  <p>
+    Nothing exotic. In roughly descending order of how often they bit:
+  </p>
+  <ul>
+    <li><strong>CUDA OOM under concurrency.</strong> The pod had been fine for weeks, then two long
+      contexts arrived together and the KV cache didn't fit. Cap max concurrency and max context
+      length at the serving layer — a rejected request with a clear error is much better than a
+      crashed pod that takes four minutes to come back.</li>
+    <li><strong>Node preemption on spot GPUs.</strong> Spot capacity is dramatically cheaper and
+      will be taken away from you with little notice. Fine for batch and dev. Not fine for an
+      interactive path unless you've built for it.</li>
+    <li><strong>Silent quality regression after a model or config bump.</strong> Nothing was down,
+      so nothing alerted, and it took a user complaint to notice. Now the eval suite runs against
+      the deployed endpoint on a schedule, not just in CI. Correctness needs monitoring too, and
+      that's the one genuinely new operational idea in all of this.</li>
+    <li><strong>Cost, arriving as a surprise.</strong> GPU nodes plus a chatty retry policy add up
+      fast. Per-namespace cost visibility and a hard token budget in the gateway, from day one.</li>
+  </ul>
+
+  <h2>Where this leaves me</h2>
+  <p>
+    Running inference on Kubernetes is not conceptually hard, but nearly every default is tuned
+    for a workload that behaves differently from yours. Start by writing down the three or four
+    assumptions your pods break — slow start, no overcommit, expensive replicas, long-lived
+    requests — and then walk through probes, autoscaling, rollouts and node placement asking what
+    each of those assumptions implies.
+  </p>
+  <p>
+    And be honest about whether you need to self-host at all. For most of what we build, a hosted
+    model endpoint behind a gateway is the right answer, and the GPU pool exists for the specific
+    cases where it isn't. Running your own inference is a real operational commitment; it should
+    be a decision, not a default.
+  </p>
+</article>
+
+<div class="post-nav">
+  <a href="building-agents-with-google-adk.html">← Building agents with Google ADK</a>
+  <a href="kubernetes-defaults-i-change.html">Seven Kubernetes defaults I change →</a>
+</div>
+
+<footer>
+  <div class="wrap">
+    <p><a href="../index.html">Home</a> · <a href="index.html">Writing</a> · <a href="../resume.pdf">Resume</a> · <a href="mailto:ganeshs404@gmail.com">Email</a></p>
+    <p>© <span id="year"></span> Ganesh Sreekumar</p>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Seven Kubernetes defaults I change on day one — Ganesh Sreekumar</title>
+<meta name="description" content="The same handful of problems show up in every cluster I inherit: missing requests, wrong probes, no PDB, no topology spread. Here's the day-one checklist." />
+<link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+
+<header class="site">
+  <nav class="site">
+    <a class="brand" href="../index.html">Ganesh Sreekumar</a>
+    <div class="links">
+      <a href="../index.html#work">Work</a>
+      <a href="index.html">Writing</a>
+      <a href="../index.html#contact">Contact</a>
+    </div>
+  </nav>
+</header>
+
+<article class="article">
+  <p class="eyebrow">Kubernetes</p>
+  <h1>Seven Kubernetes defaults I change on day one</h1>
+  <p class="byline">9 November 2025 · 5 min read</p>
+  <div class="tags"><span>Kubernetes</span><span>Operations</span><span>Reliability</span><span>Helm</span></div>
+
+  <p>
+    I've inherited a fair number of clusters now — some built by teams who knew exactly what they
+    were doing, some assembled from Stack Overflow answers under deadline. The striking thing is
+    how consistent the gaps are. It's more or less the same list every time, and none of it is
+    advanced.
+  </p>
+  <p>
+    So this is my day-one pass. Not a hardening guide, just the things that have caused me a page
+    at an unpleasant hour.
+  </p>
+
+  <h2>1. Resource requests on everything</h2>
+  <p>
+    A pod with no <code>requests</code> is invisible to the scheduler. It gets placed as though it
+    needs nothing, which means the scheduler will happily stack a node until it falls over. Then
+    the kubelet starts evicting under memory pressure, and pods with no requests are first in the
+    queue — including, quite often, the one you needed to diagnose the problem.
+  </p>
+  <p>
+    Set requests from observed usage, not from a guess. For memory I set <code>limits</code> equal
+    to <code>requests</code> — memory is incompressible, so a pod that exceeds its limit is OOM
+    killed and I'd rather that be predictable. For CPU I set a request and usually leave the limit
+    off, because CPU throttling under CFS quota causes latency weirdness that's genuinely hard to
+    attribute. That's a mildly contrarian position and I'm comfortable with it.
+  </p>
+  <p>
+    Then add a <code>LimitRange</code> per namespace so a workload deployed without requests gets
+    sensible ones by default instead of none.
+  </p>
+
+  <h2>2. Separate readiness and liveness — and use a startup probe</h2>
+  <p>
+    The two probes answer different questions. Readiness: should traffic come to me? Liveness:
+    should I be restarted? Pointing both at the same <code>/health</code> endpoint that also checks
+    the database is how you turn a slow database into a cluster-wide restart storm — every pod
+    fails liveness simultaneously, every pod restarts, none of them fix the database.
+  </p>
+  <p>
+    Rules I stick to: readiness may check dependencies. Liveness must only check that this process
+    is responsive. And if the app takes more than a few seconds to start, that's a startup probe's
+    job, not a large <code>initialDelaySeconds</code> on liveness.
+  </p>
+  <p>
+    The <code>initialDelaySeconds</code> approach forces a bad trade: long enough for a slow boot
+    means a genuinely hung pod also takes that long to be noticed. A startup probe lets you be
+    patient at boot and strict afterwards.
+  </p>
+
+  <h2>3. A PodDisruptionBudget for anything that matters</h2>
+  <p>
+    This is the one that catches people during a node upgrade. Without a PDB, a drain will evict
+    every replica of your service at once — the eviction API has no reason not to. You find out
+    during maintenance, which is exactly when you'd assumed you were being careful.
+  </p>
+  <pre><code>apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+spec:
+  minAvailable: 1          # or "50%"
+  selector:
+    matchLabels:
+      app: api</code></pre>
+  <p>
+    One caveat: a PDB on a single-replica deployment blocks the drain entirely rather than
+    protecting anything. If it's important enough to need a PDB, it's important enough to run more
+    than one replica.
+  </p>
+
+  <h2>4. Topology spread, not just replica count</h2>
+  <p>
+    Three replicas is not high availability if all three are on the same node. I've seen that
+    exact configuration described as HA in a design document.
+  </p>
+  <pre><code>topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app: api</code></pre>
+  <p>
+    I default to <code>ScheduleAnyway</code> rather than <code>DoNotSchedule</code>. Perfect spread
+    is a preference; refusing to schedule during a zone incident is a self-inflicted outage.
+  </p>
+
+  <h2>5. Default-deny NetworkPolicy</h2>
+  <p>
+    Out of the box, every pod can reach every other pod. That means a compromised frontend can talk
+    directly to your database, and nothing in the cluster will comment on it.
+  </p>
+  <p>
+    Apply a default-deny ingress policy per namespace, then allow what's needed. It's tedious for
+    about a day and then it's just how the namespace works. Do remember to allow DNS to
+    kube-system — everyone forgets, everything breaks in a confusing way, and then everyone
+    remembers.
+  </p>
+
+  <h2>6. Pin image tags, drop unnecessary privileges</h2>
+  <p>
+    <code>:latest</code> means your pods are not reproducible. Two replicas of the same Deployment
+    can be running different code, which produces bug reports that are impossible to act on. Pin
+    to a tag, or better a digest, and let your deployment tooling update it.
+  </p>
+  <p>
+    While you're in the pod spec: <code>runAsNonRoot</code>, drop capabilities, read-only root
+    filesystem where the app tolerates it. Most images run as root because nobody said otherwise,
+    not because they need to.
+  </p>
+
+  <h2>7. Make the Helm chart say what it means</h2>
+  <p>
+    Less a Kubernetes default than a habit. The charts I inherit usually have every value
+    plumbed through to every field, so a reviewer can't tell what actually differs between staging
+    and production without diffing two <code>values.yaml</code> files line by line.
+  </p>
+  <p>
+    I'd rather the chart encode opinions — sensible probes, requests, a PDB, spread constraints,
+    all present by default — and expose a small surface for the things that genuinely vary: image
+    tag, replica count, resource sizing, environment-specific config. Fewer knobs means a chart
+    that's hard to deploy badly, and the defaults carry your standards into every new service
+    without anyone having to remember them.
+  </p>
+
+  <hr />
+  <p>
+    Nothing on this list is clever, and that's why it's worth writing down. Almost every Kubernetes
+    incident I've been involved in traced back to one of these rather than to anything subtle about
+    the control plane. The exotic failure modes make better conference talks; the boring ones are
+    what actually wake you up.
+  </p>
+</article>
+
+<div class="post-nav">
+  <a href="llm-workloads-on-kubernetes.html">← Serving LLM workloads on Kubernetes</a>
+  <a href="index.html">All posts →</a>
+</div>
+
+<footer>
+  <div class="wrap">
+    <p><a href="../index.html">Home</a> · <a href="index.html">Writing</a> · <a href="../resume.pdf">Resume</a> · <a href="mailto:ganeshs404@gmail.com">Email</a></p>
+    <p>© <span id="year"></span> Ganesh Sreekumar</p>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

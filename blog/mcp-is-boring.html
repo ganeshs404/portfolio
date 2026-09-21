@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MCP is a boring protocol, and that's exactly why it works — Ganesh Sreekumar</title>
+<meta name="description" content="What the Model Context Protocol actually is, why standardising the tool layer paid off, and the tool-design rules I now apply to every MCP server." />
+<link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+
+<header class="site">
+  <nav class="site">
+    <a class="brand" href="../index.html">Ganesh Sreekumar</a>
+    <div class="links">
+      <a href="../index.html#work">Work</a>
+      <a href="index.html">Writing</a>
+      <a href="../index.html#contact">Contact</a>
+    </div>
+  </nav>
+</header>
+
+<article class="article">
+  <p class="eyebrow">MCP</p>
+  <h1>MCP is a boring protocol, and that's exactly why it works</h1>
+  <p class="byline">2 May 2026 · 6 min read</p>
+  <div class="tags"><span>MCP</span><span>Tool design</span><span>Integration</span><span>Security</span></div>
+
+  <p>
+    The first time someone explained the Model Context Protocol to me it sounded like a much
+    bigger deal than it is. Then I read the spec and it turned out to be JSON-RPC over a
+    transport, a discovery handshake, and three or four core concepts. That's it. No inference,
+    no orchestration, no opinions about your model.
+  </p>
+  <p>
+    I mean that as a compliment. The boring part is the value.
+  </p>
+
+  <h2>The problem it solved for us</h2>
+  <p>
+    We had three things that needed to read the same operational data: a chat assistant, an agent
+    flow doing first-line triage, and an internal tool that drafted incident summaries. Each one
+    had its own copy of the integration code for inventory lookups.
+  </p>
+  <p>
+    Three copies means three auth implementations, three retry policies, three different ideas of
+    what a "circuit" record looks like, and three places to patch when the upstream API adds a
+    required field. We found out about the last one the hard way — one client kept working, two
+    started returning empty results, and the behaviour difference took an afternoon to trace.
+  </p>
+  <p>
+    MCP let us invert that. The integration becomes a server. It owns the auth, the schema, the
+    retries, the rate limits. Any client that speaks the protocol discovers the available tools at
+    runtime and calls them. One implementation, three consumers, and adding a fourth consumer is
+    configuration rather than code.
+  </p>
+  <p>
+    If you've been in platform engineering for a while, this is a very familiar shape. It's the
+    same argument as a shared service versus a copy-pasted client library, and it has the same
+    payoff.
+  </p>
+
+  <h2>The parts of the spec that matter in practice</h2>
+  <p>
+    A server can expose three kinds of thing, and the distinction is worth getting right:
+  </p>
+  <ul>
+    <li><strong>Tools</strong> — functions the model may decide to call. Model-controlled.
+      This is where nearly all of our surface area lives.</li>
+    <li><strong>Resources</strong> — data the client can read and attach to context, like a
+      document or a config file. Application-controlled: the host decides what to include, not
+      the model.</li>
+    <li><strong>Prompts</strong> — parameterised templates a user can deliberately invoke.
+      Useful for "run the standard triage checklist on circuit X".</li>
+  </ul>
+  <p>
+    Teams tend to make everything a tool. Resources are the better fit whenever the host knows in
+    advance what context is relevant, because you skip a round trip and you remove a decision the
+    model can get wrong.
+  </p>
+
+  <h2>Tool descriptions are prompt engineering</h2>
+  <p>
+    This is the thing I'd most like to convince people of. Your tool's description field is not
+    documentation for humans. It is the entire basis on which a model decides whether to call your
+    tool, and with what arguments. It's prompt engineering in a JSON field, and it deserves the
+    same iteration.
+  </p>
+  <p>
+    Early on, we shipped something like:
+  </p>
+  <pre><code>{
+  "name": "get_status",
+  "description": "Gets the status",
+  "inputSchema": {
+    "type": "object",
+    "properties": { "id": { "type": "string" } }
+  }
+}</code></pre>
+  <p>
+    The model called it with customer account numbers, with postcodes, with a circuit reference
+    that had the wrong prefix, and — my favourite — with the string <code>"id"</code>. None of
+    that is the model being stupid. There's nothing in that schema that says what an
+    <code>id</code> is.
+  </p>
+  <p>
+    The version that behaved:
+  </p>
+  <pre><code>{
+  "name": "get_circuit_status",
+  "description": "Look up the current operational status of a single network circuit by its circuit reference. Use this when the user asks whether a circuit is up, down, or degraded. Returns status, last state change timestamp, and any open alarms. Does NOT cover customer account or billing status - use get_account_summary for those.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "circuit_ref": {
+        "type": "string",
+        "description": "Circuit reference in the form BT-CCT-000000 (case sensitive, 6 digits).",
+        "pattern": "^BT-CCT-[0-9]{6}$"
+      }
+    },
+    "required": ["circuit_ref"]
+  }
+}</code></pre>
+  <p>
+    Three things changed. The name says what it does. The description says when to use it
+    <em>and when not to</em> — that negative clause cut a whole class of wrong-tool calls. And the
+    schema constrains the argument, so a malformed reference fails at validation with a message
+    the model can actually act on rather than producing a confusing empty result.
+  </p>
+  <div class="callout">
+    <p>
+      <strong>Rule of thumb:</strong> if two of your tools could plausibly answer the same
+      question, the model will pick between them at random. Either say explicitly in each
+      description which is which, or merge them.
+    </p>
+  </div>
+
+  <h2>Error messages are also prompt engineering</h2>
+  <p>
+    Related, and less obvious. When a tool call fails, the error text goes back into the model's
+    context and the model decides what to do next. <code>500 Internal Server Error</code> gives it
+    nothing, so it typically retries the identical call, fails again, and then apologises to the
+    user.
+  </p>
+  <p>
+    <code>Circuit BT-CCT-9931 not found. Circuit references are 6 digits; you supplied 4. Check
+    the reference and retry.</code> gets corrected on the next turn, usually successfully. Write
+    errors for the reader, and remember your reader is a model that will try again.
+  </p>
+
+  <h2>What we deliberately did not expose</h2>
+  <p>
+    Our servers are read-heavy by design. Nothing that changes production state is callable
+    directly by a model.
+  </p>
+  <p>
+    Where a workflow needs a change, the tool returns a <em>proposed</em> change — the diff, the
+    blast radius, the rollback — and a human approves it through the normal change process. The
+    assistant compresses twenty minutes of gathering evidence into twenty seconds. It does not
+    get to press the button. On critical national infrastructure that isn't a close call, and
+    honestly I'd make the same choice on a normal production system until the audit story is a lot
+    more mature.
+  </p>
+  <p>
+    The other things I'd consider mandatory rather than nice-to-have:
+  </p>
+  <ul>
+    <li><strong>Per-tool authorisation carrying the end user's identity.</strong> A shared service
+      account that can read everything is a data-exfiltration primitive with a chat interface
+      attached. The server enforces what <em>this user</em> may see.</li>
+    <li><strong>An audit record of every invocation</strong> — who, which tool, what arguments,
+      what came back. This is the first question every assurance reviewer asks, and it's much
+      easier to add on day one than month six.</li>
+    <li><strong>Rate limits on the server, not the client.</strong> An agent in a bad loop can
+      generate a remarkable amount of traffic, and you cannot rely on the caller to be
+      well-behaved.</li>
+    <li><strong>Treat tool output as untrusted input.</strong> If a document your tool returns
+      contains text telling the model to ignore its instructions, that's a live prompt-injection
+      path. Don't hand back raw content you haven't thought about.</li>
+  </ul>
+
+  <h2>Where I've landed</h2>
+  <p>
+    MCP isn't going to make a mediocre assistant good. What it does is stop the tool layer from
+    being re-invented per application, which means the effort you spend on getting one integration
+    genuinely right — good descriptions, tight schemas, real authorisation, useful errors — pays
+    off across every client you build later.
+  </p>
+  <p>
+    The protocol is the boring, settled part. The design of what you expose through it is the
+    actual engineering, and it's worth more of your time than picking a model.
+  </p>
+
+  <hr />
+  <p style="color:var(--muted); font-size:15px;">
+    The natural follow-on: once you have a clean tool layer, how do you organise the agents that
+    use it? That's the <a href="building-agents-with-google-adk.html">Google ADK post</a>.
+  </p>
+</article>
+
+<div class="post-nav">
+  <a href="rag-lessons-from-production.html">← What broke when we put RAG in production</a>
+  <a href="building-agents-with-google-adk.html">Building agents with Google ADK →</a>
+</div>
+
+<footer>
+  <div class="wrap">
+    <p><a href="../index.html">Home</a> · <a href="index.html">Writing</a> · <a href="../resume.pdf">Resume</a> · <a href="mailto:ganeshs404@gmail.com">Email</a></p>
+    <p>© <span id="year"></span> Ganesh Sreekumar</p>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

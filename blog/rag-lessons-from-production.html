@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>What actually broke when we put RAG in front of network engineers — Ganesh Sreekumar</title>
+<meta name="description" content="Lessons from taking a retrieval-augmented generation assistant from demo to pilot: chunking, hybrid retrieval, reranking, and why the eval set should come first." />
+<link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+
+<header class="site">
+  <nav class="site">
+    <a class="brand" href="../index.html">Ganesh Sreekumar</a>
+    <div class="links">
+      <a href="../index.html#work">Work</a>
+      <a href="index.html">Writing</a>
+      <a href="../index.html#contact">Contact</a>
+    </div>
+  </nav>
+</header>
+
+<article class="article">
+  <p class="eyebrow">RAG</p>
+  <h1>What actually broke when we put RAG in front of network engineers</h1>
+  <p class="byline">14 June 2026 · 7 min read</p>
+  <div class="tags"><span>RAG</span><span>Retrieval</span><span>Evaluation</span><span>Python</span></div>
+
+  <p>
+    The first version took about two weeks. Load the documents, embed them, stick a vector search
+    in front of a model, wrap it in a chat UI. It demoed beautifully. I asked it how to check a
+    circuit's provisioning state and it gave me a clean, cited, correct answer. Everyone in the
+    room nodded.
+  </p>
+  <p>
+    Then we opened it to about forty network engineers, and the feedback came back roughly as:
+    <em>it's confident and it's wrong</em>. Which is the worst combination you can ship to people
+    who are troubleshooting a live fault.
+  </p>
+  <p>
+    What follows is what we actually fixed, in roughly the order the problems hurt. Almost none of
+    it was about the model.
+  </p>
+
+  <h2>1. Chunking was the whole ballgame</h2>
+  <p>
+    We started where everyone starts: split every document into 1,000-character chunks with a
+    200-character overlap. It's the default in every tutorial, and it is fine right up until your
+    corpus contains a twelve-page runbook where the procedure heading is on one page and step 4
+    is on another.
+  </p>
+  <p>
+    Fixed-size splitting cuts through the middle of tables. It separates a warning from the step
+    it's warning about. It produces chunks that begin with "…and then restart the secondary" with
+    no indication of what "the secondary" refers to. The embedding for that chunk is essentially
+    noise, so it either never gets retrieved or it gets retrieved for the wrong question.
+  </p>
+  <p>
+    We moved to structure-aware chunking: parse the document's heading hierarchy first, split on
+    section boundaries, and only fall back to size-based splitting inside a section that's genuinely
+    too long. Then we prepend the breadcrumb to every chunk before embedding it:
+  </p>
+  <pre><code>Runbook: Core Network / Circuit Provisioning / Rollback Procedure
+
+If the provisioning job fails after step 3, do not re-run it.
+Roll back using ...</code></pre>
+  <p>
+    That breadcrumb costs maybe twenty tokens and it does two jobs. It gives the embedding
+    real topical signal, and it gives the model enough context to know what the chunk is about
+    when it lands in the prompt. This one change moved our retrieval hit-rate more than anything
+    else we did, including swapping the embedding model.
+  </p>
+  <div class="callout">
+    <p>
+      <strong>If you take one thing from this post:</strong> before you tune the model, print out
+      twenty random chunks from your index and read them. If <em>you</em> can't tell what a chunk
+      is about without its neighbours, neither can the retriever.
+    </p>
+  </div>
+
+  <h2>2. Pure vector search loses to hybrid search on technical corpora</h2>
+  <p>
+    Semantic search is excellent at "how do I roll back a failed provisioning job". It is
+    surprisingly bad at "what does error <code>NE-4471</code> mean".
+  </p>
+  <p>
+    Error codes, circuit IDs, hostnames, CLI flags — these are exactly the tokens embeddings treat
+    as near-interchangeable. <code>NE-4471</code> and <code>NE-4417</code> sit almost on top of
+    each other in vector space, and to an engineer looking at an alarm they are completely
+    different problems. Our users, being network engineers, searched by identifier constantly.
+  </p>
+  <p>
+    So we run both: dense vector search plus BM25 keyword search, fused with reciprocal rank
+    fusion. BM25 nails the exact-token queries, the vectors handle the conceptual ones, and RRF
+    doesn't need per-query weight tuning to merge them. It's not clever. It just works, and it
+    took an afternoon.
+  </p>
+
+  <h2>3. A reranker earned its latency</h2>
+  <p>
+    Retrieval and prompting want opposite things. Retrieval wants to cast a wide net; the prompt
+    wants only the few chunks that matter, because irrelevant context in the window actively
+    degrades the answer. Stuff fifteen chunks in and the model starts hedging, blending two
+    procedures together, or answering the question the fourth chunk implies rather than the one
+    that was asked.
+  </p>
+  <p>
+    The shape that worked: retrieve 40 candidates cheaply, run a cross-encoder reranker over the
+    query-chunk pairs, keep the top 5. The reranker actually reads the query against each chunk
+    instead of comparing two independently-computed vectors, and it's much better at judging
+    relevance. It cost us roughly 150–200ms. For an assistant where the answer takes two seconds
+    to stream anyway, nobody noticed, and answer quality went up sharply.
+  </p>
+
+  <h2>4. "I don't know" had to be a first-class answer</h2>
+  <p>
+    Our corpus has holes. Some procedures live in a colleague's head and always have. When a
+    question fell into one of those holes, the early system did what models do: produced something
+    plausible, formatted confidently, with a citation to a document that was <em>adjacent</em> to
+    the answer rather than containing it.
+  </p>
+  <p>
+    That's not a minor annoyance, it's a trust-destroying event. An engineer who gets burned once
+    by a fabricated rollback step never opens the tool again — and tells their team.
+  </p>
+  <p>
+    Two changes. First, a relevance floor: if the best reranked score doesn't clear a threshold, we
+    don't call the model at all. We show the closest documents and say plainly that we don't have a
+    documented answer. Second, the system prompt makes abstention explicitly acceptable and the
+    answer format requires a citation per claim, so there's nowhere comfortable for an
+    uncited assertion to hide.
+  </p>
+  <p>
+    Counterintuitively, coverage going <em>down</em> made adoption go <em>up</em>. A tool that's
+    honest about its limits gets trusted within them.
+  </p>
+
+  <h2>5. We should have built the eval set on day one</h2>
+  <p>
+    This is my real regret. For the first month, "did that change help?" was answered by someone
+    typing three questions they happened to remember and eyeballing the output. Which means we
+    genuinely did not know whether we were improving things. At one point we shipped a chunking
+    change that felt better and measurably wasn't.
+  </p>
+  <p>
+    We ended up with something quite modest: about 120 real questions harvested from the team's
+    chat history, each annotated with the document that should be retrieved and a short
+    human-written reference answer. On every change we measure two things separately:
+  </p>
+  <ul>
+    <li><strong>Retrieval:</strong> is the right document in the top <em>k</em>? This is a plain
+      information-retrieval metric, it needs no model, and it isolates half your system.</li>
+    <li><strong>Faithfulness:</strong> is every claim in the answer supported by the retrieved
+      context? We use a model as judge here, with a strict rubric, and spot-check its verdicts by hand.</li>
+  </ul>
+  <p>
+    It runs in CI. A PR that drops retrieval hit-rate by more than a couple of points needs an
+    explanation. Splitting the two metrics matters, because "the answer was bad" is otherwise
+    unactionable — you don't know whether to fix the index or the prompt. In our case it was
+    almost always the index.
+  </p>
+
+  <h2>6. Permissions are a retrieval concern, not a UI concern</h2>
+  <p>
+    Worth stating because it's easy to get wrong late and expensively. Not every engineer should
+    see every document. If you filter after retrieval, you've already leaked — the model saw the
+    content, and it will happily summarise it into an answer even if you hide the citation.
+  </p>
+  <p>
+    Access control has to be a pre-filter on the vector search itself, with the permission metadata
+    on the chunk, evaluated against the calling user's entitlements. Retrofitting that is painful.
+    Building it in from the start costs almost nothing.
+  </p>
+
+  <h2>What I'd do differently</h2>
+  <ul>
+    <li>Write the eval set before the retriever. Even 30 questions beats vibes.</li>
+    <li>Start with hybrid retrieval. Pure vector search on a technical corpus is a known dead end.</li>
+    <li>Spend the first week on the ingestion pipeline, not the chat interface. The chat interface
+      is a weekend. The ingestion pipeline is the product.</li>
+    <li>Ship to ten friendly users before forty. The failure modes that matter only appear when
+      people ask questions you didn't imagine.</li>
+  </ul>
+  <p>
+    None of this is exotic. That's sort of the point — the interesting problems in a RAG system
+    are almost all data-engineering problems, and they respond to ordinary engineering discipline:
+    measure it, isolate the layers, and read your own data.
+  </p>
+
+  <hr />
+  <p style="color:var(--muted); font-size:15px;">
+    Next in this series: the tool layer. Once the assistant could answer from documents, the
+    obvious question was letting it look at live systems too — which is where
+    <a href="mcp-is-boring.html">MCP</a> came in.
+  </p>
+</article>
+
+<div class="post-nav">
+  <a href="index.html">← All posts</a>
+  <a href="mcp-is-boring.html">MCP is a boring protocol →</a>
+</div>
+
+<footer>
+  <div class="wrap">
+    <p><a href="../index.html">Home</a> · <a href="index.html">Writing</a> · <a href="../resume.pdf">Resume</a> · <a href="mailto:ganeshs404@gmail.com">Email</a></p>
+    <p>© <span id="year"></span> Ganesh Sreekumar</p>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

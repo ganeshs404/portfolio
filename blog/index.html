@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Writing — Ganesh Sreekumar</title>
+<meta name="description" content="Notes on production GenAI — RAG, MCP, Google ADK agents — and running it all on Kubernetes." />
+<link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+
+<header class="site">
+  <nav class="site">
+    <a class="brand" href="../index.html">Ganesh Sreekumar</a>
+    <div class="links">
+      <a href="../index.html#about">About</a>
+      <a href="../index.html#experience">Experience</a>
+      <a href="../index.html#work">Work</a>
+      <a href="index.html">Writing</a>
+      <a href="../index.html#contact">Contact</a>
+    </div>
+  </nav>
+</header>
+
+<section class="hero" style="padding:64px 0 28px;">
+  <div class="wrap">
+    <h1 style="font-size:clamp(28px,4.2vw,38px);">Writing</h1>
+    <p class="summary">
+      Notes from building GenAI systems that have to survive contact with real users, and from
+      running them on Kubernetes. Mostly the things I got wrong first. I write these for the
+      engineers I mentor through <a href="https://theaipeople.uk/" target="_blank" rel="noopener">The AI People UK</a>,
+      and because writing something down is the fastest way to find the hole in your own reasoning.
+    </p>
+  </div>
+</section>
+
+<section style="padding-top:20px;">
+  <div class="wrap">
+    <div class="post-list">
+
+      <div class="post-item">
+        <h3><a href="rag-lessons-from-production.html">What actually broke when we put RAG in front of network engineers</a></h3>
+        <p class="post-meta">14 June 2026 · 7 min read · RAG, evaluation</p>
+        <p class="excerpt">
+          The demo was great. The pilot was not. Almost every problem turned out to be a
+          retrieval problem wearing a model-shaped mask — and the fixes were unglamorous.
+        </p>
+        <a class="more" href="rag-lessons-from-production.html">Read →</a>
+      </div>
+
+      <div class="post-item">
+        <h3><a href="mcp-is-boring.html">MCP is a boring protocol, and that's exactly why it works</a></h3>
+        <p class="post-meta">2 May 2026 · 6 min read · MCP, tool design</p>
+        <p class="excerpt">
+          There's no magic in the Model Context Protocol. It's JSON-RPC, a handful of verbs, and
+          a discovery handshake. The interesting work is all in tool design.
+        </p>
+        <a class="more" href="mcp-is-boring.html">Read →</a>
+      </div>
+
+      <div class="post-item">
+        <h3><a href="building-agents-with-google-adk.html">Building a multi-agent assistant with Google ADK</a></h3>
+        <p class="post-meta">19 March 2026 · 9 min read · Agents, ADK</p>
+        <p class="excerpt">
+          How I broke one overloaded chatbot into a coordinator and three specialists — including
+          the part where I over-engineered it and had to delete an agent.
+        </p>
+        <a class="more" href="building-agents-with-google-adk.html">Read →</a>
+      </div>
+
+      <div class="post-item">
+        <h3><a href="llm-workloads-on-kubernetes.html">Serving LLM workloads on Kubernetes: what's different</a></h3>
+        <p class="post-meta">28 January 2026 · 8 min read · Kubernetes, GPUs</p>
+        <p class="excerpt">
+          Kubernetes assumes pods are cheap, fast to start, and stateless. GPU inference pods are
+          none of those things. Here's what that breaks.
+        </p>
+        <a class="more" href="llm-workloads-on-kubernetes.html">Read →</a>
+      </div>
+
+      <div class="post-item">
+        <h3><a href="kubernetes-defaults-i-change.html">Seven Kubernetes defaults I change on day one</a></h3>
+        <p class="post-meta">9 November 2025 · 5 min read · Kubernetes, operations</p>
+        <p class="excerpt">
+          Every cluster I've inherited had the same handful of problems. None of them are exotic.
+          All of them cause a 3am page eventually.
+        </p>
+        <a class="more" href="kubernetes-defaults-i-change.html">Read →</a>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><a href="../index.html">Home</a> · <a href="index.html">Writing</a> · <a href="../resume.pdf">Resume</a> · <a href="mailto:ganeshs404@gmail.com">Email</a></p>
+    <p>© <span id="year"></span> Ganesh Sreekumar</p>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

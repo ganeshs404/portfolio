@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Building a multi-agent assistant with Google ADK — Ganesh Sreekumar</title>
+<meta name="description" content="Decomposing an overloaded chatbot into a coordinator and specialist agents with Google's Agent Development Kit: routing, session state, MCP toolsets, and deploying on Kubernetes." />
+<link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+
+<header class="site">
+  <nav class="site">
+    <a class="brand" href="../index.html">Ganesh Sreekumar</a>
+    <div class="links">
+      <a href="../index.html#work">Work</a>
+      <a href="index.html">Writing</a>
+      <a href="../index.html#contact">Contact</a>
+    </div>
+  </nav>
+</header>
+
+<article class="article">
+  <p class="eyebrow">Agents</p>
+  <h1>Building a multi-agent assistant with Google ADK</h1>
+  <p class="byline">19 March 2026 · 9 min read</p>
+  <div class="tags"><span>Google ADK</span><span>Gemini</span><span>Multi-agent</span><span>MCP</span><span>Kubernetes</span></div>
+
+  <p>
+    Our assistant started as one agent with one prompt. By the time it had a document retriever,
+    four operational lookups, a ticket search and a summariser attached, the prompt was about 900
+    tokens of instructions and the behaviour had become genuinely unpredictable. It would answer a
+    diagnostic question from documentation. It would call three tools to answer something it
+    already had in context. Occasionally it would write an incident summary nobody asked for.
+  </p>
+  <p>
+    That's not a model problem. That's one component doing four jobs — the same thing that happens
+    to a service when you keep bolting endpoints onto it. So I did the obvious thing and split it
+    up, using Google's <strong>Agent Development Kit</strong> (ADK) because it's explicitly built
+    around composing agents rather than around a single chat loop, and because we were already on
+    Gemini via Vertex AI.
+  </p>
+  <p>
+    Here's how it's structured, what ADK gives you, and the bit I got wrong.
+  </p>
+
+  <h2>The shape: a coordinator and three specialists</h2>
+  <p>
+    ADK's core primitive is <code>LlmAgent</code> — a model, an instruction, some tools, and
+    optionally a set of <code>sub_agents</code>. If an agent has sub-agents, the model can hand the
+    conversation to one of them based on their descriptions. That transfer mechanism is the
+    routing layer, and it's driven entirely by the <code>description</code> field, which makes
+    description-writing the most important work in the whole design.
+  </p>
+  <p>
+    What we ended up with:
+  </p>
+  <ul>
+    <li><strong>Coordinator</strong> — no tools of its own. Reads the request, decides which
+      specialist owns it, hands over. Its instruction is mostly a list of routing rules and what
+      to do when a request spans two specialists.</li>
+    <li><strong>Diagnostics agent</strong> — owns the live operational tools: circuit status,
+      alarm history, config diff. Instructed to gather evidence and state findings, not to
+      speculate about causes.</li>
+    <li><strong>Knowledge agent</strong> — owns retrieval over runbooks and documentation. This is
+      the <a href="rag-lessons-from-production.html">RAG pipeline</a> from the earlier post,
+      wrapped as a tool.</li>
+    <li><strong>Summariser</strong> — takes whatever is in session state and writes the incident
+      note in our house format. Boring, deterministic, and the thing engineers liked most.</li>
+  </ul>
+  <p>
+    Roughly:
+  </p>
+  <pre><code>from google.adk.agents import LlmAgent
+
+diagnostics = LlmAgent(
+    name="diagnostics",
+    model="gemini-2.5-pro",
+    description=(
+        "Inspects live network state: circuit status, alarm history, "
+        "config drift. Use for questions about what a device or circuit "
+        "is doing RIGHT NOW."
+    ),
+    instruction=(
+        "You gather evidence from operational systems. Report exactly what "
+        "the tools return. If a tool fails, say so - never estimate a value. "
+        "Do not recommend remediation steps; the knowledge agent owns those."
+    ),
+    tools=[circuit_status, alarm_history, config_diff],
+)
+
+knowledge = LlmAgent(
+    name="knowledge",
+    model="gemini-2.5-flash",
+    description=(
+        "Answers 'how do I' and 'what does this mean' questions from "
+        "runbooks and internal documentation. Use for procedures, "
+        "error code meanings, and escalation paths."
+    ),
+    instruction=(
+        "Answer only from retrieved documents and cite each one. "
+        "If retrieval returns nothing relevant, say you have no "
+        "documented answer. Do not infer procedures."
+    ),
+    tools=[search_runbooks],
+)
+
+coordinator = LlmAgent(
+    name="coordinator",
+    model="gemini-2.5-pro",
+    instruction=(
+        "Route the user's request to exactly one specialist.\n"
+        "- Live state of a device or circuit -> diagnostics\n"
+        "- Procedures, error codes, escalation -> knowledge\n"
+        "- 'Write this up' / 'summarise' -> summariser\n"
+        "If a request needs live state AND a procedure, start with "
+        "diagnostics, then hand to knowledge with the findings."
+    ),
+    sub_agents=[diagnostics, knowledge, summariser],
+)</code></pre>
+  <p>
+    Two things worth pulling out. Each specialist runs on the model that fits its job — the
+    knowledge agent is mostly summarising retrieved text, so Flash is fine and considerably
+    cheaper, while the coordinator and diagnostics agent get Pro because routing and evidence
+    interpretation are where mistakes are expensive. Per-agent model selection was one of the
+    quieter wins; it cut our cost per conversation by around a third with no quality complaints.
+  </p>
+  <p>
+    And the negative instructions matter as much as the positive ones. "Do not recommend
+    remediation steps" is what stops the diagnostics agent from wandering into the knowledge
+    agent's territory and answering from the model's priors instead of from a runbook.
+  </p>
+
+  <h2>Session state is what makes it feel coherent</h2>
+  <p>
+    ADK carries a <code>Session</code> with an event history and a mutable <code>state</code> dict
+    through the whole invocation. This turns out to be the difference between a set of agents and
+    an assistant.
+  </p>
+  <p>
+    An agent can write its result to state via <code>output_key</code>, and a later agent can read
+    it. So the diagnostics agent stashes what it found, and when the user says "ok, write that
+    up", the summariser already has the evidence — no re-running six lookups, no asking the user
+    to repeat the circuit reference.
+  </p>
+  <pre><code>diagnostics = LlmAgent(
+    ...,
+    output_key="diagnostic_findings",
+)
+
+summariser = LlmAgent(
+    name="summariser",
+    model="gemini-2.5-flash",
+    instruction=(
+        "Write an incident note in the standard format using these "
+        "findings:\n{diagnostic_findings}\n"
+        "If a section has no evidence, write 'not established'."
+    ),
+)</code></pre>
+  <p>
+    The <code>{diagnostic_findings}</code> placeholder is interpolated from state when the
+    instruction is built. It's a small feature that removes a lot of plumbing.
+  </p>
+  <p>
+    One operational note: in development you'll use <code>InMemorySessionService</code>, which
+    means state dies with the process. That's fine locally and wrong in production behind more
+    than one replica — a user's second message can land on a different pod and find an empty
+    session. Move to a persistent session service (we use the Vertex AI one; a database-backed
+    service works too) before you scale past one replica, not after. We learned that during a
+    rollout, which is an annoying way to learn it.
+  </p>
+
+  <h2>Reusing the MCP servers</h2>
+  <p>
+    The tools the diagnostics agent calls are the same MCP servers our chatbot uses. ADK has a
+    toolset that speaks MCP, so the agent discovers the available tools at startup rather than
+    having them hardcoded:
+  </p>
+  <pre><code>from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import SseServerParams
+
+network_tools = MCPToolset(
+    connection_params=SseServerParams(
+        url="https://mcp-network.internal/sse",
+        headers={"Authorization": f"Bearer {token}"},
+    ),
+)</code></pre>
+  <p>
+    This is the payoff from <a href="mcp-is-boring.html">doing the tool layer properly</a>. When
+    we added an alarm-correlation tool to the MCP server, the agent picked it up without a code
+    change on our side. One integration, two consumers, and the authorisation story stays in one
+    place.
+  </p>
+  <p>
+    A practical caveat: the model still has to choose correctly from whatever the server advertises,
+    so a server that exposes thirty tools will degrade routing quality. We filter the toolset down
+    to what a given agent actually needs. Discoverability is a feature; an unbounded tool list is
+    not.
+  </p>
+
+  <h2>Where I over-engineered it</h2>
+  <p>
+    The first version had five agents. There was a "triage" agent between the coordinator and the
+    specialists whose job was to classify the request before routing it.
+  </p>
+  <p>
+    It was pure overhead. It added a model call and about 1.5 seconds of latency to every single
+    conversation, and its classification was no better than the coordinator's own routing decision
+    — because it was the same model reading the same text with a narrower prompt. I'd added a layer
+    because the architecture diagram looked more thorough with it, which is not a reason.
+  </p>
+  <p>
+    Deleting it made the system faster, cheaper, and slightly more accurate. The general lesson,
+    which I now apply as a default: an agent should exist because it owns distinct tools or a
+    distinct output contract. If its only job is to think about the request, that thinking belongs
+    in the prompt of an agent that already exists.
+  </p>
+  <div class="callout">
+    <p>
+      <strong>Two failure modes worth watching for:</strong> handing over to an agent that can't
+      finish the job (the user sees a dead end), and two agents that both plausibly own a request
+      (routing becomes a coin flip). Both are fixed in the <code>description</code> fields, not by
+      adding another agent.
+    </p>
+  </div>
+
+  <h2>Evaluating agents is harder than evaluating RAG</h2>
+  <p>
+    With retrieval you can ask a crisp question: was the right document in the top <em>k</em>?
+    With an agent flow, "correct" covers the route taken, the tools called, and the final answer,
+    and a run can produce a good answer by an unrepeatable path.
+  </p>
+  <p>
+    What we settled on is three separate checks, because collapsing them into one score tells you
+    nothing actionable:
+  </p>
+  <ul>
+    <li><strong>Routing accuracy</strong> — for a set of labelled requests, did the coordinator
+      hand off to the agent we'd have chosen? Cheap, deterministic enough to gate a PR, and the
+      first thing that breaks when someone edits a description.</li>
+    <li><strong>Trajectory</strong> — were the expected tools called, without a pile of redundant
+      calls? ADK's evaluation support compares an actual tool-call trace against an expected one,
+      which is exactly the right primitive.</li>
+    <li><strong>Final response quality</strong> — model-as-judge against a reference answer, with
+      human spot-checks, same as the RAG work.</li>
+  </ul>
+  <p>
+    Routing accuracy is the one I'd add first if you only have time for one. It catches
+    description regressions immediately, and description regressions are the most common way an
+    ADK app quietly gets worse.
+  </p>
+
+  <h2>Running it</h2>
+  <p>
+    Locally, <code>adk web</code> gives you a dev UI that shows the event stream — which agent got
+    the request, what it called, what came back, how state changed. I use it constantly. Reading a
+    trace is how you find out that your coordinator is routing "what does NE-4471 mean" to
+    diagnostics because the description mentioned alarms.
+  </p>
+  <p>
+    For production, an ADK app is a Python service, so it deploys like any other Python service.
+    We containerise it and run it on Kubernetes alongside the rest of the platform — same Helm
+    chart conventions, same gateway, same Prometheus scraping — because the alternative was a
+    separate deployment path for one application, and that's how you end up with a snowflake.
+    Managed options exist (Cloud Run, Vertex AI Agent Engine) and are a reasonable choice if you
+    don't already have a platform; we did, so the integration cost of using it was near zero.
+  </p>
+  <p>
+    Two things I'd insist on wherever it runs. Put the model calls behind a gateway so timeouts,
+    retries and token budgets are infrastructure concerns rather than scattered through
+    application code. And export traces — a slow conversation is almost always one agent making a
+    tool call you didn't expect, and without spans you're guessing. OpenTelemetry from the start
+    is worth the setup.
+  </p>
+
+  <h2>Summary</h2>
+  <p>
+    The multi-agent version is easier to reason about than the monolithic prompt for the same
+    reasons a well-factored service is easier to reason about than a god object: each piece has a
+    clear job, a clear contract, and a test you can write for it.
+  </p>
+  <p>
+    But it's a decomposition, not a magic trick. Every agent you add is another routing decision
+    that can go wrong, another prompt to maintain, and often another model call to pay for. Start
+    with one agent. Split when you can name the tools or the output contract that justify the
+    split. Then write the descriptions like they're the most important code in the project,
+    because they are.
+  </p>
+</article>
+
+<div class="post-nav">
+  <a href="mcp-is-boring.html">← MCP is a boring protocol</a>
+  <a href="llm-workloads-on-kubernetes.html">Serving LLM workloads on Kubernetes →</a>
+</div>
+
+<footer>
+  <div class="wrap">
+    <p><a href="../index.html">Home</a> · <a href="index.html">Writing</a> · <a href="../resume.pdf">Resume</a> · <a href="mailto:ganeshs404@gmail.com">Email</a></p>
+    <p>© <span id="year"></span> Ganesh Sreekumar</p>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>
