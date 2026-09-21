@@ -1,10 +1,75 @@
-# Default ignored files
-/shelf/
-/.idea/workspace.xml
-# Editor-based HTTP Client requests
-/httpRequests/
-# Ignored default folder with query files
-/queries/
-# Datasource local storage ignored files
-/dataSources/
-/dataSources.local.xml
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ---- Editors / IDEs ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- Secrets & environment ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+!local-dev/secrets/
+!local-dev/secrets/.gitkeep
+credentials.json
+
+# ---- Python (backend services) ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Node (portal) ----
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Docker / local runtime ----
+docker-compose.override.yml
+*.pid
+
+# ---- Logs & temp ----
+logs/
+*.log
+tmp/
+temp/
+
+# ---- Uploaded documents & fixtures (never commit real ID scans) ----
+uploads/
+document-store/
+*.local.*
+
+# ---- Service account keys ----
+# The directory is committed (see local-dev/secrets/.gitkeep); its contents never are.
+local-dev/secrets/*
+!local-dev/secrets/.gitkeep
+*-service-account*.json
+gcp-*.json
+
+# ---- Kubernetes ----
+# A kubeconfig is a credential. The Civo one lives outside this repository on purpose.
+kubeconfig
+*kubeconfig*
+*.kubeconfig
